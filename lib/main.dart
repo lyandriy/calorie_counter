@@ -41,7 +41,17 @@ class HomeScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Mi diario'),
-        actions: [ /* el botón de ajustes que ya tienes */ ],
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const GoalsScreen()),
+              );
+            },
+          ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -214,24 +224,117 @@ class MacroBar extends StatelessWidget {
   }
 }
 
+// Iconos disponibles para las comidas. Guardamos la CLAVE (texto), no el icono.
+const Map<String, IconData> mealIcons = {
+  'restaurant': Icons.restaurant_outlined,
+  'breakfast': Icons.free_breakfast_outlined,
+  'lunch': Icons.lunch_dining_outlined,
+  'dinner': Icons.dinner_dining_outlined,
+  'snack': Icons.cookie_outlined,
+  'coffee': Icons.local_cafe_outlined,
+  'bakery': Icons.bakery_dining_outlined,
+  'ramen': Icons.ramen_dining_outlined,
+  'fitness': Icons.fitness_center_outlined,
+};
+
 class Meal {
   const Meal({
+    required this.id,
     required this.name,
-    required this.icon,
+    required this.iconKey,
     required this.goalCalories,
+    required this.goalProtein,
+    required this.goalCarbs,
+    required this.goalFat,
   });
 
+  final String id; // identificador único: no cambia aunque cambie el nombre
   final String name;
-  final IconData icon;
-  final int goalCalories; // lo que toca comer en esta comida
+  final String iconKey;
+  final int goalCalories;
+  final int goalProtein; // gramos
+  final int goalCarbs;
+  final int goalFat;
+
+  IconData get icon => mealIcons[iconKey] ?? Icons.restaurant_outlined;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'iconKey': iconKey,
+        'goalCalories': goalCalories,
+        'goalProtein': goalProtein,
+        'goalCarbs': goalCarbs,
+        'goalFat': goalFat,
+      };
+
+  factory Meal.fromJson(Map<String, dynamic> json) => Meal(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        iconKey: json['iconKey'] as String,
+        goalCalories: json['goalCalories'] as int,
+        goalProtein: json['goalProtein'] as int,
+        goalCarbs: json['goalCarbs'] as int,
+        goalFat: json['goalFat'] as int,
+      );
 }
 
-const List<Meal> sampleMeals = [
-  Meal(name: 'Desayuno', icon: Icons.free_breakfast_outlined, goalCalories: 500),
-  Meal(name: 'Comida', icon: Icons.lunch_dining_outlined, goalCalories: 800),
-  Meal(name: 'Merienda', icon: Icons.cookie_outlined, goalCalories: 200),
-  Meal(name: 'Cena', icon: Icons.dinner_dining_outlined, goalCalories: 500),
+// Las comidas iniciales. Sus ids son los nombres de antes, para que los
+// alimentos que ya habías añadido sigan apareciendo en su comida.
+const List<Meal> defaultMeals = [
+  Meal(id: 'Desayuno', name: 'Desayuno', iconKey: 'breakfast', goalCalories: 500, goalProtein: 35, goalCarbs: 55, goalFat: 16),
+  Meal(id: 'Comida', name: 'Comida', iconKey: 'lunch', goalCalories: 800, goalProtein: 56, goalCarbs: 88, goalFat: 26),
+  Meal(id: 'Merienda', name: 'Merienda', iconKey: 'snack', goalCalories: 200, goalProtein: 14, goalCarbs: 22, goalFat: 7),
+  Meal(id: 'Cena', name: 'Cena', iconKey: 'dinner', goalCalories: 500, goalProtein: 35, goalCarbs: 55, goalFat: 16),
 ];
+
+class MealsStore extends ChangeNotifier {
+  static const String _storageKey = 'meals';
+
+  List<Meal> _meals = List.of(defaultMeals);
+  List<Meal> get meals => List.unmodifiable(_meals);
+
+  void add(Meal meal) {
+    _meals.add(meal);
+    _changed();
+  }
+
+  void update(Meal meal) {
+    final index = _meals.indexWhere((m) => m.id == meal.id);
+    if (index == -1) return;
+    _meals[index] = meal;
+    _changed();
+  }
+
+  void remove(String id) {
+    _meals.removeWhere((m) => m.id == id);
+    _changed();
+  }
+
+  void _changed() {
+    notifyListeners();
+    _save();
+  }
+
+  Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final text = prefs.getString(_storageKey);
+    if (text == null) return; // primera vez: nos quedamos con las iniciales
+    final list = jsonDecode(text) as List<dynamic>;
+    _meals = list.map((m) => Meal.fromJson(m as Map<String, dynamic>)).toList();
+    notifyListeners();
+  }
+
+  Future<void> _save() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _storageKey,
+      jsonEncode(_meals.map((m) => m.toJson()).toList()),
+    );
+  }
+}
+
+final mealsStore = MealsStore();
 
 class MealsCard extends StatelessWidget {
   const MealsCard({super.key});
@@ -239,23 +342,39 @@ class MealsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: diary,
+      listenable: Listenable.merge([diary, mealsStore]),
       builder: (context, _) {
         return Card(
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16),
+            padding: const EdgeInsets.symmetric(vertical: 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Text(
-                    'Comidas',
-                    style: Theme.of(context).textTheme.titleMedium,
+                  padding: const EdgeInsets.only(left: 24, right: 8),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Comidas',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.edit_outlined),
+                        tooltip: 'Gestionar comidas',
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const ManageMealsScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 8),
-                for (final meal in sampleMeals) MealTile(meal: meal),
+                for (final meal in mealsStore.meals) MealTile(meal: meal),
               ],
             ),
           ),
@@ -519,7 +638,7 @@ class _AddFoodScreenState extends State<AddFoodScreen> {
                                 state: selection.state,
                                 unit: selection.unit,
                                 amount: selection.amount,
-                                mealName: widget.meal.name,
+                                mealId: widget.meal.id,
                                 date: diary.selectedDate,
                               ),
                             );
@@ -594,7 +713,7 @@ class _QuantitySheetState extends State<QuantitySheet> {
       state: state,
       unit: unit,
       amount: amount,
-      mealName: '',
+      mealId: '',
     );
 
     return Padding(
@@ -703,18 +822,17 @@ class DiaryEntry {
     required this.state,
     required this.unit,
     required this.amount,
-    required this.mealName,
+    required this.mealId,
     DateTime? date,
   }) : date = date ?? DateTime.now();
 
   final Food food;
   final String state;
   final FoodUnit unit;
-  final double amount; // en la unidad elegida
-  final String mealName;
+  final double amount;
+  final String mealId;
   final DateTime date;
 
-  // Todo se calcula pasando por gramos.
   double get grams => amount * unit.gramsPerUnit;
   Nutrition get _nutrition => food.states[state]!;
 
@@ -728,7 +846,7 @@ class DiaryEntry {
         'state': state,
         'unit': unit.toJson(),
         'amount': amount,
-        'mealName': mealName,
+        'mealId': mealId,
         'date': date.toIso8601String(),
       };
 
@@ -737,7 +855,8 @@ class DiaryEntry {
         state: json['state'] as String,
         unit: FoodUnit.fromJson(json['unit'] as Map<String, dynamic>),
         amount: (json['amount'] as num).toDouble(),
-        mealName: json['mealName'] as String,
+        // Los datos antiguos guardaban 'mealName': los seguimos entendiendo.
+        mealId: (json['mealId'] ?? json['mealName']) as String,
         date: DateTime.parse(json['date'] as String),
       );
 }
@@ -783,7 +902,14 @@ class Diary extends ChangeNotifier {
   }
 
   List<DiaryEntry> entriesFor(Meal meal) =>
-      _dayEntries.where((e) => e.mealName == meal.name).toList();
+      _dayEntries.where((e) => e.mealId == meal.id).toList();
+
+  // Borra los alimentos de una comida en TODOS los días.
+  void removeEntriesOfMeal(String mealId) {
+    _entries.removeWhere((e) => e.mealId == mealId);
+    notifyListeners();
+    _save();
+  }
 
   int get totalCalories => _dayEntries.fold(0, (sum, e) => sum + e.calories);
   double get totalProtein => _dayEntries.fold(0.0, (sum, e) => sum + e.protein);
@@ -822,7 +948,6 @@ class MealDetailScreen extends StatelessWidget {
 
   final Meal meal;
 
-  // Elimina la entrada y ofrece deshacerlo.
   void _delete(BuildContext context, DiaryEntry entry) {
     diary.remove(entry);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -844,61 +969,107 @@ class MealDetailScreen extends StatelessWidget {
         listenable: diary,
         builder: (context, _) {
           final entries = diary.entriesFor(meal);
+          final protein = entries.fold(0.0, (sum, e) => sum + e.protein);
+          final carbs = entries.fold(0.0, (sum, e) => sum + e.carbs);
+          final fat = entries.fold(0.0, (sum, e) => sum + e.fat);
 
-          if (entries.isEmpty) {
-            return const Center(child: Text('Todavía no has añadido nada'));
-          }
-
-          return ListView.builder(
-            itemCount: entries.length,
-            itemBuilder: (context, index) {
-              final entry = entries[index];
-              final stateText = entry.food.states.length > 1 ? ' · ${entry.state}' : '';
-
-              return Dismissible(
-                key: ObjectKey(entry),
-                direction: DismissDirection.endToStart,
-                background: Container(
-                  color: Theme.of(context).colorScheme.error,
-                  alignment: Alignment.centerRight,
-                  padding: const EdgeInsets.only(right: 24),
-                  child: const Icon(Icons.delete_outline, color: Colors.white),
-                ),
-                onDismissed: (_) => _delete(context, entry),
-                child: ListTile(
-                  title: Text(entry.food.name),
-                  subtitle: Text(
-                    '${formatAmount(entry.amount)} ${entry.unit.label}$stateText'
-                    ' · ${entry.calories} kcal',
-                  ),
-                  onTap: () async {
-                    final selection = await showModalBottomSheet<Selection>(
-                      context: context,
-                      isScrollControlled: true,
-                      showDragHandle: true,
-                      builder: (context) => QuantitySheet(food: entry.food, entry: entry),
-                    );
-                    if (selection != null) {
-                      diary.replace(
-                        entry,
-                        DiaryEntry(
-                          food: entry.food,
-                          state: selection.state,
-                          unit: selection.unit,
-                          amount: selection.amount,
-                          mealName: entry.mealName,
-                          date: entry.date, // sigue siendo del mismo día
-                        ),
-                      );
-                    }
-                  },
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: () => _delete(context, entry),
+          return Column(
+            children: [
+              Card(
+                margin: const EdgeInsets.all(16),
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    children: [
+                      MacroBar(
+                        label: 'Proteínas',
+                        consumed: protein.round(),
+                        goal: meal.goalProtein,
+                        color: const Color(0xFFE5574F),
+                      ),
+                      const SizedBox(height: 12),
+                      MacroBar(
+                        label: 'Hidratos',
+                        consumed: carbs.round(),
+                        goal: meal.goalCarbs,
+                        color: const Color(0xFFF2A93B),
+                      ),
+                      const SizedBox(height: 12),
+                      MacroBar(
+                        label: 'Grasas',
+                        consumed: fat.round(),
+                        goal: meal.goalFat,
+                        color: const Color(0xFF4F8FE5),
+                      ),
+                    ],
                   ),
                 ),
-              );
-            },
+              ),
+              Expanded(
+                child: entries.isEmpty
+                    ? const Center(child: Text('Todavía no has añadido nada'))
+                    : ListView.builder(
+                        itemCount: entries.length,
+                        itemBuilder: (context, index) {
+                          final entry = entries[index];
+                          final stateText = entry.food.states.length > 1
+                              ? ' · ${entry.state}'
+                              : '';
+
+                          return Dismissible(
+                            key: ObjectKey(entry),
+                            direction: DismissDirection.endToStart,
+                            background: Container(
+                              color: Theme.of(context).colorScheme.error,
+                              alignment: Alignment.centerRight,
+                              padding: const EdgeInsets.only(right: 24),
+                              child: const Icon(
+                                Icons.delete_outline,
+                                color: Colors.white,
+                              ),
+                            ),
+                            onDismissed: (_) => _delete(context, entry),
+                            child: ListTile(
+                              title: Text(entry.food.name),
+                              subtitle: Text(
+                                '${formatAmount(entry.amount)} ${entry.unit.label}$stateText'
+                                ' · ${entry.calories} kcal',
+                              ),
+                              onTap: () async {
+                                final selection =
+                                    await showModalBottomSheet<Selection>(
+                                  context: context,
+                                  isScrollControlled: true,
+                                  showDragHandle: true,
+                                  builder: (context) => QuantitySheet(
+                                    food: entry.food,
+                                    entry: entry,
+                                  ),
+                                );
+                                if (selection != null) {
+                                  diary.replace(
+                                    entry,
+                                    DiaryEntry(
+                                      food: entry.food,
+                                      state: selection.state,
+                                      unit: selection.unit,
+                                      amount: selection.amount,
+                                      mealId: entry.mealId,
+                                      date: entry.date,
+                                    ),
+                                  );
+                                }
+                              },
+                              trailing: IconButton(
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () => _delete(context, entry),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
           );
         },
       ),
@@ -1124,6 +1295,265 @@ class DaySelector extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+// Lista de comidas con botón para crear una nueva.
+class ManageMealsScreen extends StatelessWidget {
+  const ManageMealsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Mis comidas')),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const MealEditScreen()),
+          );
+        },
+        icon: const Icon(Icons.add),
+        label: const Text('Añadir comida'),
+      ),
+      body: ListenableBuilder(
+        listenable: Listenable.merge([mealsStore, goalsStore]),
+        builder: (context, _) {
+          final meals = mealsStore.meals;
+          final total = meals.fold(0, (sum, m) => sum + m.goalCalories);
+          final daily = goalsStore.goals.calories;
+
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
+            children: [
+              Text(
+                meals.isEmpty
+                    ? 'No tienes ninguna comida. ¡Añade la primera!'
+                    : 'Tus comidas suman $total kcal (objetivo diario: $daily kcal).',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 8),
+              for (final meal in meals)
+                ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: colors.primaryContainer,
+                    child: Icon(meal.icon, color: colors.onPrimaryContainer),
+                  ),
+                  title: Text(meal.name),
+                  subtitle: Text(
+                    '${meal.goalCalories} kcal · P ${meal.goalProtein} g · '
+                    'H ${meal.goalCarbs} g · G ${meal.goalFat} g',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => MealEditScreen(meal: meal),
+                      ),
+                    );
+                  },
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+// Crear o editar una comida.
+class MealEditScreen extends StatefulWidget {
+  const MealEditScreen({super.key, this.meal});
+
+  final Meal? meal; // null = crear una comida nueva
+
+  @override
+  State<MealEditScreen> createState() => _MealEditScreenState();
+}
+
+class _MealEditScreenState extends State<MealEditScreen> {
+  late final TextEditingController name;
+  late final TextEditingController calories;
+  late final TextEditingController protein;
+  late final TextEditingController carbs;
+  late final TextEditingController fat;
+  late String iconKey;
+
+  @override
+  void initState() {
+    super.initState();
+    final m = widget.meal;
+    name = TextEditingController(text: m?.name ?? '');
+    calories = TextEditingController(text: '${m?.goalCalories ?? 500}');
+    protein = TextEditingController(text: '${m?.goalProtein ?? 35}');
+    carbs = TextEditingController(text: '${m?.goalCarbs ?? 55}');
+    fat = TextEditingController(text: '${m?.goalFat ?? 16}');
+    iconKey = m?.iconKey ?? 'restaurant';
+  }
+
+  @override
+  void dispose() {
+    name.dispose();
+    calories.dispose();
+    protein.dispose();
+    carbs.dispose();
+    fat.dispose();
+    super.dispose();
+  }
+
+  int _value(TextEditingController c) => int.tryParse(c.text) ?? 0;
+
+  bool get _isValid =>
+      name.text.trim().isNotEmpty &&
+      _value(calories) > 0 &&
+      _value(protein) > 0 &&
+      _value(carbs) > 0 &&
+      _value(fat) > 0;
+
+  Widget _field(String label, String suffix, TextEditingController controller) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: TextField(
+        controller: controller,
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        decoration: InputDecoration(
+          labelText: label,
+          suffixText: suffix,
+          border: const OutlineInputBorder(),
+        ),
+        onChanged: (_) => setState(() {}),
+      ),
+    );
+  }
+
+  void _save() {
+    final old = widget.meal;
+    final meal = Meal(
+      // Una comida nueva recibe un id único a partir de la hora actual.
+      id: old?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
+      name: name.text.trim(),
+      iconKey: iconKey,
+      goalCalories: _value(calories),
+      goalProtein: _value(protein),
+      goalCarbs: _value(carbs),
+      goalFat: _value(fat),
+    );
+
+    if (old == null) {
+      mealsStore.add(meal);
+    } else {
+      mealsStore.update(meal);
+    }
+    Navigator.pop(context);
+  }
+
+  Future<void> _delete() async {
+    final meal = widget.meal!;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('¿Eliminar comida?'),
+        content: Text(
+          'Se eliminarán también todos los alimentos registrados en '
+          '"${meal.name}", de todos los días.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      diary.removeEntriesOfMeal(meal.id);
+      mealsStore.remove(meal.id);
+      if (mounted) Navigator.pop(context);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final isEditing = widget.meal != null;
+
+    final macroKcal =
+        _value(protein) * 4 + _value(carbs) * 4 + _value(fat) * 9;
+    final diff = macroKcal - _value(calories);
+    final diffText = diff > 0 ? '+$diff' : '$diff';
+
+    return Scaffold(
+      appBar: AppBar(title: Text(isEditing ? 'Editar comida' : 'Nueva comida')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: TextField(
+              controller: name,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                labelText: 'Nombre',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+          ),
+          Text('Icono', style: textTheme.titleSmall),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final entry in mealIcons.entries)
+                ChoiceChip(
+                  label: Icon(entry.value),
+                  showCheckmark: false,
+                  selected: entry.key == iconKey,
+                  onSelected: (_) => setState(() => iconKey = entry.key),
+                ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          _field('Calorías', 'kcal', calories),
+          _field('Proteínas', 'g', protein),
+          _field('Hidratos', 'g', carbs),
+          _field('Grasas', 'g', fat),
+          Text(
+            'Tus macros suman $macroKcal kcal ($diffText respecto al objetivo de esta comida).',
+            style: textTheme.bodySmall,
+          ),
+          const SizedBox(height: 24),
+          FilledButton(
+            onPressed: _isValid ? _save : null,
+            child: const Text('Guardar'),
+          ),
+          if (isEditing) ...[
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: _delete,
+              icon: Icon(
+                Icons.delete_outline,
+                color: Theme.of(context).colorScheme.error,
+              ),
+              label: Text(
+                'Eliminar comida',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
